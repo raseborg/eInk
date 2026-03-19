@@ -5,22 +5,24 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-# ── Font paths ──────────────────────────────────────────────────────────────
-
-# Place Inter font files in fonts/ directory for the best look:
+# ── Font loading ─────────────────────────────────────────────────────────────
+#
+# Place Inter font files in fonts/ for the best look on both macOS and Pi:
 #   fonts/Inter-Regular.ttf  and  fonts/Inter-Bold.ttf
 # Download from: https://github.com/rsms/inter/releases
+#
+# Fallback chain:  Inter → Futura (macOS) → Helvetica (macOS) → DejaVu (Linux)
+
 _FONTS_DIR = Path(__file__).parent / "fonts"
+
 
 def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
     candidates: list[tuple[str, int]] = []
 
-    # 1. Bundled Inter (works on both macOS and Raspberry Pi)
     inter = _FONTS_DIR / ("Inter-Bold.ttf" if bold else "Inter-Regular.ttf")
     if inter.exists():
         candidates.append((str(inter), 0))
 
-    # 2. Platform system fonts
     if platform.system() == "Darwin":
         candidates += [
             ("/System/Library/Fonts/Supplemental/Futura.ttc", 4 if bold else 0),
@@ -30,8 +32,8 @@ def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
     else:
         base = "/usr/share/fonts/truetype/"
         candidates += [
-            (base + "inter/Inter-Bold.ttf"   if bold else base + "inter/Inter-Regular.ttf", 0),
-            (base + "dejavu/DejaVuSans-Bold.ttf" if bold else base + "dejavu/DejaVuSans.ttf", 0),
+            (base + ("inter/Inter-Bold.ttf" if bold else "inter/Inter-Regular.ttf"), 0),
+            (base + ("dejavu/DejaVuSans-Bold.ttf" if bold else "dejavu/DejaVuSans.ttf"), 0),
         ]
 
     for path, index in candidates:
@@ -39,33 +41,87 @@ def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
             return ImageFont.truetype(path, size, index=index)
         except (OSError, IOError):
             continue
-
     return ImageFont.load_default()
 
 
-# ── Constants ──────────────────────────────────────────────────────────────
+# ── Constants ────────────────────────────────────────────────────────────────
 
 WIDTH, HEIGHT = 800, 480
-BG = 255       # white
-FG = 0         # black
-GRAY = 160     # gray (used during development only)
-DIVIDER = 100  # gray color for divider lines
+BG      = 255   # white
+FG      = 0     # black
+GRAY    = 150   # mid-gray for secondary text
+DIVIDER = 180   # light gray for grid lines
 
-PAD = 12       # general padding
-LEFT_W = 380   # left column width
-RIGHT_X = LEFT_W + 1  # right column start x
+PAD = 12   # cell padding
 
-FONT_HUGE  = _load_font(52, bold=True)
-FONT_LARGE = _load_font(26, bold=True)
-FONT_MED   = _load_font(20)
-FONT_SMALL = _load_font(16)
-FONT_TINY  = _load_font(13)
+# Grid: 3 equal columns, 2 rows, dark header
+HEADER_H = 46
+COL_W    = (WIDTH - 2) // 3     # ≈ 266 px  (2 px for dividers)
+COL2_X   = COL_W + 1            # 267
+COL3_X   = COL_W * 2 + 2        # 534
+ROW_H    = (HEIGHT - HEADER_H) // 2  # 217 px
+ROW2_Y   = HEADER_H + ROW_H          # 263
 
-# ── Weather icons (geometric, drawn with Pillow) ───────────────────────────
+# Fonts
+FONT_HUGE   = _load_font(52, bold=True)   # temperature, kWh value
+FONT_LARGE  = _load_font(28, bold=True)   # HSL departure times
+FONT_MED    = _load_font(20, bold=True)   # event titles, waste types
+FONT_SMALL  = _load_font(16)              # detail rows
+FONT_TINY   = _load_font(13)              # gray secondary text
+FONT_LABEL  = _load_font(11)             # section labels
+FONT_HEADER = _load_font(22, bold=True)   # header "KOTINÄKYMÄ"
+
+
+# ── Drawing primitives ───────────────────────────────────────────────────────
+
+def _text(draw: ImageDraw.Draw, xy, text: str, font, fill=FG, anchor="la"):
+    draw.text(xy, text, font=font, fill=fill, anchor=anchor)
+
+
+def _divider(draw: ImageDraw.Draw, x1: int, y: int, x2: int):
+    draw.line([(x1, y), (x2, y)], fill=DIVIDER, width=1)
+
+
+def _vertical_divider(draw: ImageDraw.Draw, x: int, y1: int, y2: int):
+    draw.line([(x, y1), (x, y2)], fill=DIVIDER, width=1)
+
+
+def _label(draw: ImageDraw.Draw, x: int, y: int, text: str, stale: bool = False) -> int:
+    """Draws the small gray section label. Returns y-coordinate for content start."""
+    _text(draw, (x + PAD, y + PAD), text, FONT_LABEL, fill=GRAY)
+    if stale:
+        _text(draw, (x + PAD + 5 + len(text) * 7, y + PAD), "*", FONT_LABEL, fill=GRAY)
+    return y + PAD + 16   # label height (11px) + 5px gap
+
+
+def _badge(draw: ImageDraw.Draw, x: int, y: int, text: str) -> int:
+    """Black pill with white text. Returns the badge width."""
+    bbox = draw.textbbox((0, 0), text, font=FONT_SMALL)
+    bw = bbox[2] - bbox[0] + 18
+    bh = bbox[3] - bbox[1] + 10
+    draw.rectangle([x, y, x + bw, y + bh], fill=FG)
+    draw.text((x + 9, y + 5), text, font=FONT_SMALL, fill=BG)
+    return bw
+
+
+_DAYS_FI = ["ma", "ti", "ke", "to", "pe", "la", "su"]
+
+
+def _date_str(iso: str, weekday: bool = False) -> str:
+    """'2026-03-22' → '22.3.'  (or 'su 22.3.' if weekday=True)"""
+    try:
+        d = date.fromisoformat(iso)
+        s = f"{d.day}.{d.month}."
+        if weekday:
+            s = f"{_DAYS_FI[d.weekday()]} {s}"
+        return s
+    except ValueError:
+        return iso[5:]
+
+
+# ── Weather icons (geometric, drawn with Pillow) ─────────────────────────────
 
 def _cloud(draw: ImageDraw.Draw, ox: int, oy: int, s: int, fill=FG):
-    """Cloud base: filled cloud positioned within the (ox, oy) – (ox+s, oy+s) box."""
-    # Three ellipses forming the cloud silhouette
     w, h = s, s
     draw.ellipse([ox + int(0.12*w), oy + int(0.52*h), ox + int(0.52*w), oy + int(0.82*h)], fill=fill)
     draw.ellipse([ox + int(0.25*w), oy + int(0.30*h), ox + int(0.70*w), oy + int(0.72*h)], fill=fill)
@@ -74,7 +130,6 @@ def _cloud(draw: ImageDraw.Draw, ox: int, oy: int, s: int, fill=FG):
 
 
 def _sun(draw: ImageDraw.Draw, cx: int, cy: int, r: int, rays: int = 8, fill=FG):
-    """Sun: circle + rays."""
     ri, ro = int(r * 0.55), r
     draw.ellipse([cx - ri, cy - ri, cx + ri, cy + ri], fill=fill)
     for i in range(rays):
@@ -86,356 +141,292 @@ def _sun(draw: ImageDraw.Draw, cx: int, cy: int, r: int, rays: int = 8, fill=FG)
         draw.line([x1, y1, x2, y2], fill=fill, width=2)
 
 
-def _draw_weather_icon(draw: ImageDraw.Draw, right_x: int, top_y: int, icon_key: str, size: int = 56):
-    """Draws the weather icon so that its top-right corner is at (right_x, top_y)."""
-    ox = right_x - size
-    oy = top_y
-    s  = size
-
+def _draw_weather_icon(draw: ImageDraw.Draw, ox: int, oy: int, icon_key: str, size: int = 44):
+    s = size
     if icon_key in ("clear", "mainly_clear"):
         _sun(draw, ox + s // 2, oy + s // 2, s // 2 - 2)
-
     elif icon_key == "partly_cloudy":
-        # Small sun in the upper left, cloud in front
         _sun(draw, ox + int(s * 0.32), oy + int(s * 0.30), int(s * 0.26))
         _cloud(draw, ox + int(s * 0.18), oy + int(s * 0.38), int(s * 0.82), fill=BG)
         _cloud(draw, ox + int(s * 0.18), oy + int(s * 0.38), int(s * 0.82))
-
     elif icon_key == "overcast":
         _cloud(draw, ox + int(s * 0.05), oy + int(s * 0.14), int(s * 0.90))
-
     elif icon_key == "fog":
         for i in range(4):
-            y = oy + int(s * (0.22 + i * 0.18))
-            w = int(s * (0.85 - i * 0.10))
-            x = ox + (s - w) // 2
-            draw.rectangle([x, y, x + w, y + 3], fill=FG)
-
+            fy = oy + int(s * (0.22 + i * 0.18))
+            fw = int(s * (0.85 - i * 0.10))
+            fx = ox + (s - fw) // 2
+            draw.rectangle([fx, fy, fx + fw, fy + 3], fill=FG)
     elif icon_key in ("drizzle", "rain"):
         _cloud(draw, ox, oy, int(s * 0.80))
-        drop_y0 = oy + int(s * 0.70)
+        dy0 = oy + int(s * 0.70)
         for i in range(5):
-            x = ox + int(s * (0.15 + i * 0.18))
-            draw.line([x, drop_y0, x - 3, drop_y0 + int(s * 0.22)], fill=FG, width=2)
-
+            dx = ox + int(s * (0.15 + i * 0.18))
+            draw.line([dx, dy0, dx - 3, dy0 + int(s * 0.22)], fill=FG, width=2)
     elif icon_key == "snow":
         _cloud(draw, ox, oy, int(s * 0.80))
-        dot_y = oy + int(s * 0.78)
+        dy = oy + int(s * 0.78)
         for i in range(4):
             cx2 = ox + int(s * (0.18 + i * 0.22))
             r2 = 3
-            draw.ellipse([cx2 - r2, dot_y - r2, cx2 + r2, dot_y + r2], fill=FG)
-
+            draw.ellipse([cx2 - r2, dy - r2, cx2 + r2, dy + r2], fill=FG)
     elif icon_key == "thunderstorm":
         _cloud(draw, ox, oy, int(s * 0.80))
-        # Lightning bolt
         bx, by = ox + int(s * 0.40), oy + int(s * 0.68)
         bolt = [
-            (bx,          by),
-            (bx - int(s * 0.14), by + int(s * 0.18)),
-            (bx + int(s * 0.04), by + int(s * 0.16)),
-            (bx - int(s * 0.12), by + int(s * 0.34)),
-            (bx + int(s * 0.14), by + int(s * 0.12)),
-            (bx + int(s * 0.00), by + int(s * 0.13)),
+            (bx,                   by),
+            (bx - int(s * 0.14),   by + int(s * 0.18)),
+            (bx + int(s * 0.04),   by + int(s * 0.16)),
+            (bx - int(s * 0.12),   by + int(s * 0.34)),
+            (bx + int(s * 0.14),   by + int(s * 0.12)),
+            (bx,                   by + int(s * 0.13)),
         ]
         draw.polygon(bolt, fill=FG)
-
     else:
-        # Unknown – small cloud
         _cloud(draw, ox + int(s * 0.10), oy + int(s * 0.20), int(s * 0.80))
 
 
-# ── Helper functions ──────────────────────────────────────────────────────────
+# ── Section drawers ──────────────────────────────────────────────────────────
+#
+# Each drawer receives (draw, data, x, y, w, h) where (x, y) is the top-left
+# corner of the cell, w is the usable column width, h is the row height.
 
-def _divider(draw: ImageDraw.Draw, x1: int, y: int, x2: int):
-    draw.line([(x1, y), (x2, y)], fill=DIVIDER, width=1)
-
-
-def _vertical_divider(draw: ImageDraw.Draw, x: int, y1: int, y2: int):
-    draw.line([(x, y1), (x, y2)], fill=DIVIDER, width=1)
-
-
-def _text(draw: ImageDraw.Draw, xy, text: str, font, fill=FG, anchor="la"):
-    draw.text(xy, text, font=font, fill=fill, anchor=anchor)
-
-
-def _stale_mark(draw: ImageDraw.Draw, x: int, y: int):
-    """Small '*' if the data is stale."""
-    _text(draw, (x, y), "*", FONT_TINY, fill=GRAY)
-
-
-# ── Section drawers ────────────────────────────────────────────────────────
-
-def _draw_weather_datetime(draw: ImageDraw.Draw, data: dict | None, x: int, y: int, w: int, h: int):
-    """Weather + date & time in the same panel (bottom-left)."""
-    title_y = y + PAD
-    _text(draw, (x + PAD, title_y), "SÄÄ", FONT_LARGE)
-    if data and data.get("_stale"):
-        _stale_mark(draw, x + PAD + 60, title_y)
-
-    # Date & time in the top-right corner
-    now = datetime.now()
-    _text(draw, (x + w - PAD, title_y + 2),  now.strftime("%-d.%-m.%Y"), FONT_SMALL, fill=GRAY, anchor="ra")
-    _text(draw, (x + w - PAD, title_y + 18), now.strftime("%H:%M"),       FONT_MED,   anchor="ra")
+def _draw_weather(draw: ImageDraw.Draw, data: dict | None,
+                  x: int, y: int, w: int, h: int):
+    cy = _label(draw, x, y, "SÄÄ", stale=bool(data and data.get("_stale")))
 
     if not data:
-        _text(draw, (x + PAD, title_y + 50), "Ei saatavilla", FONT_MED, fill=GRAY)
+        _text(draw, (x + PAD, cy), "Ei saatavilla", FONT_SMALL, fill=GRAY)
         return
 
     temp     = data.get("temperature")
     icon_key = data.get("icon", "unknown")
-    temp_str = f"{temp:.0f}°" if temp is not None else "—°"
-    temp_y   = title_y + 46
+    cond     = data.get("condition_fi") or data.get("condition", "")
+    wind     = data.get("wind_speed")
+    precip   = data.get("precipitation")
+    feels    = data.get("feels_like")
+    hi       = data.get("forecast_today_high")
+    lo       = data.get("forecast_today_low")
 
-    _text(draw, (x + PAD, temp_y), temp_str, FONT_HUGE)
-    _draw_weather_icon(draw, x + PAD + 130, temp_y + 4, icon_key, size=46)
+    temp_str = f"{temp:.0f}°" if temp is not None else "-°"
 
-    cx = x + PAD + 185
-    cond = data.get("condition_fi") or data.get("condition", "")
-    _text(draw, (cx, temp_y + 4), cond, FONT_SMALL)
+    # Large temperature
+    _text(draw, (x + PAD, cy), temp_str, FONT_HUGE)
+    temp_bbox = draw.textbbox((0, 0), temp_str, font=FONT_HUGE)
+    temp_w    = temp_bbox[2] - temp_bbox[0]
 
-    wind   = data.get("wind_speed")
-    precip = data.get("precipitation")
-    feels  = data.get("feels_like")
-    hi     = data.get("forecast_today_high")
-    lo     = data.get("forecast_today_low")
+    # Icon to the right of temperature
+    icon_x = x + PAD + temp_w + 8
+    if icon_x + 44 < x + w:
+        _draw_weather_icon(draw, icon_x, cy + 4, icon_key, size=44)
+
+    detail_y = cy + 62
+    _text(draw, (x + PAD, detail_y), cond, FONT_SMALL)
 
     parts = []
     if wind   is not None: parts.append(f"Tuuli {wind:.0f} m/s")
     if precip is not None: parts.append(f"Sade {precip:.1f} mm")
     if parts:
-        _text(draw, (cx, temp_y + 22), "  ·  ".join(parts), FONT_TINY)
+        _text(draw, (x + PAD, detail_y + 20), "  ·  ".join(parts), FONT_TINY, fill=GRAY)
 
     row3 = []
-    if feels is not None:                     row3.append(f"Tuntuu {feels:.0f}°")
-    if hi is not None and lo is not None:     row3.append(f"{lo:.0f}°–{hi:.0f}°")
+    if feels is not None:                   row3.append(f"Tuntuu {feels:.0f}°")
+    if hi is not None and lo is not None:   row3.append(f"{lo:.0f}°-{hi:.0f}°")
     if row3:
-        _text(draw, (cx, temp_y + 38), "   ".join(row3), FONT_TINY, fill=GRAY)
+        _text(draw, (x + PAD, detail_y + 38), "   ".join(row3), FONT_TINY, fill=GRAY)
 
 
-
-def _draw_electricity(draw: ImageDraw.Draw, data: dict | None, x: int, y: int, w: int):
-    title_y = y + PAD
-    _text(draw, (x + PAD, title_y), "SÄHKÖ", FONT_LARGE)
-    if data and data.get("_stale"):
-        _stale_mark(draw, x + PAD + 90, title_y)
+def _draw_electricity(draw: ImageDraw.Draw, data: dict | None,
+                      x: int, y: int, w: int, h: int):
+    cy = _label(draw, x, y, "SÄHKÖ", stale=bool(data and data.get("_stale")))
 
     if not data:
-        _text(draw, (x + PAD, title_y + 34), "Ei saatavilla", FONT_MED, fill=GRAY)
+        _text(draw, (x + PAD, cy), "Ei saatavilla", FONT_SMALL, fill=GRAY)
         return
 
-    kwh = data.get("yesterday_kwh")
-    date = data.get("yesterday_date", "")
-    cost = data.get("cost_estimate_eur")
+    kwh  = data.get("yesterday_kwh")
+    dstr = data.get("yesterday_date", "")
 
-    kwh_str = f"{kwh:.1f} kWh" if kwh is not None else "— kWh"
-    _text(draw, (x + PAD, title_y + 34), kwh_str, FONT_LARGE)
+    kwh_str = f"{kwh:.1f}" if kwh is not None else "-"
+    _text(draw, (x + PAD, cy), kwh_str, FONT_HUGE)
 
-    if date:
+    # "kWh" unit next to the number
+    bbox = draw.textbbox((0, 0), kwh_str, font=FONT_HUGE)
+    _text(draw, (x + PAD + bbox[2] - bbox[0] + 6, cy + 32), "kWh", FONT_SMALL, fill=GRAY)
+
+    # Date label below
+    if dstr:
         today = datetime.now().date()
         try:
-            data_date = datetime.strptime(date, "%Y-%m-%d").date()
+            data_date = datetime.strptime(dstr, "%Y-%m-%d").date()
             delta = (today - data_date).days
             if delta == 1:
-                label = f"Eilen ({data_date.day}.{data_date.month}.)"
+                label = f"eilen {data_date.day}.{data_date.month}."
             elif delta == 0:
-                label = "Tänään"
+                label = "tänään"
             else:
                 label = f"{data_date.day}.{data_date.month}. ({delta} pv sitten)"
         except ValueError:
-            label = date
-        _text(draw, (x + PAD, title_y + 64), label, FONT_SMALL, fill=GRAY)
-    if cost is not None:
-        _text(draw, (x + PAD, title_y + 82), f"≈ {cost:.2f} €", FONT_SMALL)
+            label = dstr
+        _text(draw, (x + PAD, cy + 62), label, FONT_TINY, fill=GRAY)
 
 
-def _draw_datetime(draw: ImageDraw.Draw, x: int, y: int, w: int, h: int):
-    now = datetime.now()
-    date_str = now.strftime("%-d.%-m.%Y")
-    time_str = now.strftime("%H:%M")
-
-    cy = y + h // 2
-    _text(draw, (x + PAD, cy - 18), date_str, FONT_MED)
-    _text(draw, (x + PAD, cy + 4), time_str, FONT_SMALL, fill=GRAY)
-
-
-def _draw_calendar(draw: ImageDraw.Draw, data: dict | None, x: int, y: int, w: int, h: int):
-    title_y = y + PAD
-    _text(draw, (x + PAD, title_y), "KALENTERI", FONT_LARGE)
-    if data and data.get("_stale"):
-        _stale_mark(draw, x + PAD + 140, title_y)
+def _draw_calendar(draw: ImageDraw.Draw, data: dict | None,
+                   x: int, y: int, w: int, h: int):
+    cy = _label(draw, x, y, "KALENTERI", stale=bool(data and data.get("_stale")))
 
     if not data:
-        _text(draw, (x + PAD, title_y + 34), "Ei saatavilla", FONT_MED, fill=GRAY)
+        _text(draw, (x + PAD, cy), "Ei saatavilla", FONT_SMALL, fill=GRAY)
         return
 
     events = data.get("events", [])
     if not events:
-        _text(draw, (x + PAD, title_y + 38), "Ei tulevia tapahtumia", FONT_SMALL, fill=GRAY)
+        _text(draw, (x + PAD, cy), "Ei tulevia tapahtumia", FONT_TINY, fill=GRAY)
         return
 
-    event_y = title_y + 38
-    row_h1  = 20   # title row height
-    row_h2  = 17   # date/time row height
-    row_gap = 7
+    row_h1  = 16   # date+time row
+    row_h2  = 22   # title row
+    row_gap = 10   # gap between events
     block_h = row_h1 + row_h2 + row_gap
-    # Collect visible events
-    visible = []
-    tmp_y = event_y
+
     for ev in events:
-        if tmp_y + block_h > y + h - 10:
+        if cy + block_h > y + h - PAD:
             break
-        visible.append(ev)
-        tmp_y += block_h
-    for i, ev in enumerate(visible):
-        ev_date = ev.get("date", "")
-        time    = ev.get("time")
-        title   = ev.get("title", "")
+        dt  = _date_str(ev.get("date", ""), weekday=True)
+        t   = ev.get("time")
+        if t:
+            dt += f"  {t[:5]}"
+        title = ev.get("title", "")
 
-        try:
-            from datetime import date as _d
-            d = _d.fromisoformat(ev_date)
-            dt_str = f"{d.day}.{d.month}."
-        except ValueError:
-            dt_str = ev_date[5:]
-        if time:
-            dt_str += f" {time[:5]}"
-
-        _text(draw, (x + PAD, event_y), title[:32], FONT_SMALL)
-        _text(draw, (x + PAD, event_y + row_h1), dt_str, FONT_TINY, fill=GRAY)
-
-        event_y += block_h
+        _text(draw, (x + PAD, cy),          dt,        FONT_TINY,  fill=GRAY)
+        _text(draw, (x + PAD, cy + row_h1), title[:26], FONT_MED)
+        cy += block_h
 
 
-def _draw_hsl(draw: ImageDraw.Draw, data: dict | None, x: int, y: int, w: int, h: int):
-    title_y = y + PAD
-    _text(draw, (x + PAD, title_y), "HSL", FONT_LARGE)
-    if data and data.get("_stale"):
-        _stale_mark(draw, x + PAD + 200, title_y)
+def _draw_hsl(draw: ImageDraw.Draw, data: dict | None,
+              x: int, y: int, w: int, h: int):
+    cy = _label(draw, x, y, "HSL", stale=bool(data and data.get("_stale")))
 
     if not data:
-        _text(draw, (x + PAD, title_y + 38), "Ei saatavilla", FONT_SMALL, fill=GRAY)
+        _text(draw, (x + PAD, cy), "Ei saatavilla", FONT_SMALL, fill=GRAY)
         return
 
     connections = data.get("connections", [])
     if not connections:
-        _text(draw, (x + PAD, title_y + 38), "Ei yhteyksiä", FONT_SMALL, fill=GRAY)
+        _text(draw, (x + PAD, cy), "Ei yhteyksiä", FONT_SMALL, fill=GRAY)
         return
 
-    row_y   = title_y + 38
-    row_h1  = 22   # top row height (time + minutes)
-    row_h2  = 18   # bottom row height (walk + lines + stop)
-    row_gap = 8    # gap to next connection
+    # First connection — large display
+    first = connections[0]
+    dep   = first.get("departure", "")
+    arr   = first.get("arrival", "")
+    mins  = first.get("minutes_until", 0)
+    lines = first.get("lines", "")
+    walk  = first.get("walk_minutes", 0)
+    stop  = first.get("first_stop", "")
+    fdep  = first.get("first_depart", "")
+
+    time_str  = f"{dep}->{arr}" if arr else dep
+    mins_str  = f"Lähtöön {mins} min" if mins > 0 else "Lähdettävä nyt"
+    route_str = (f"{walk}min -> {lines}" if walk else lines).strip()
+    stop_str  = f"{stop} {fdep}".strip() if stop else ""
+
+    _text(draw, (x + PAD, cy), time_str, FONT_LARGE)
+    cy += 34
+
+    _text(draw, (x + PAD, cy), route_str, FONT_TINY, fill=GRAY)
+    if stop_str:
+        _text(draw, (x + w - PAD, cy), stop_str, FONT_TINY, fill=GRAY, anchor="ra")
+    cy += 18
+
+    # Minutes-until badge
+    _badge(draw, x + PAD, cy, mins_str)
+    cy += 30
+
+    # Remaining connections — compact two-row style
+    row_h1  = 18
+    row_h2  = 15
+    row_gap = 8
     block_h = row_h1 + row_h2 + row_gap
-    # Collect visible connections
-    visible = []
-    tmp_y = row_y
-    for conn in connections:
-        if tmp_y + block_h > y + h - 10:
+
+    for conn in connections[1:]:
+        if cy + block_h > y + h - PAD:
             break
-        visible.append(conn)
-        tmp_y += block_h
-    for i, conn in enumerate(visible):
-        dep          = conn.get("departure", "")
-        arr          = conn.get("arrival", "")
-        mins         = conn.get("minutes_until", 0)
-        lines        = conn.get("lines", "")
-        walk         = conn.get("walk_minutes", 0)
-        first_stop   = conn.get("first_stop", "")
-        first_depart = conn.get("first_depart", "")
+        dep2   = conn.get("departure", "")
+        arr2   = conn.get("arrival", "")
+        mins2  = conn.get("minutes_until", 0)
+        lines2 = conn.get("lines", "")
+        walk2  = conn.get("walk_minutes", 0)
+        stop2  = conn.get("first_stop", "")
+        fdep2  = conn.get("first_depart", "")
 
-        # Top row: "13:35->14:16" on the left, "19 min" on the right
-        time_str = f"{dep}->{arr}" if arr else dep
-        mins_str = f"{mins} min" if mins > 0 else "Nyt"
-        _text(draw, (x + PAD,     row_y), time_str, FONT_SMALL)
-        _text(draw, (x + w - PAD, row_y), mins_str, FONT_SMALL, anchor="ra")
+        t2     = f"{dep2}->{arr2}" if arr2 else dep2
+        m2     = f"{mins2} min" if mins2 > 0 else "Nyt"
+        r2     = (f"{walk2}min -> {lines2}" if walk2 else lines2).strip()
+        s2     = f"{stop2} {fdep2}".strip() if stop2 else ""
 
-        # Bottom row: "4min -> 165 -> U" on the left, "Satulamaakarintie 13:39" on the right
-        route_str = f"{walk}min -> {lines}" if walk else lines
-        stop_str  = f"{first_stop} {first_depart}".strip() if first_stop else ""
-        _text(draw, (x + PAD,     row_y + row_h1), route_str, FONT_TINY, fill=GRAY)
-        if stop_str:
-            _text(draw, (x + w - PAD, row_y + row_h1), stop_str, FONT_TINY, fill=GRAY, anchor="ra")
-
-        row_y += block_h
+        _text(draw, (x + PAD,     cy), t2, FONT_SMALL)
+        _text(draw, (x + w - PAD, cy), m2, FONT_SMALL, anchor="ra")
+        cy += row_h1
+        _text(draw, (x + PAD,     cy), r2, FONT_TINY, fill=GRAY)
+        if s2:
+            _text(draw, (x + w - PAD, cy), s2, FONT_TINY, fill=GRAY, anchor="ra")
+        cy += row_h2 + row_gap
 
 
-def _draw_daycare(draw: ImageDraw.Draw, data: dict | None, x: int, y: int, w: int, h: int):
-    title_y = y + PAD
-    _text(draw, (x + PAD, title_y), "PÄIVÄKOTI", FONT_LARGE)
-    if data and data.get("_stale"):
-        _stale_mark(draw, x + PAD + 130, title_y)
+def _draw_daycare(draw: ImageDraw.Draw, data: dict | None,
+                  x: int, y: int, w: int, h: int):
+    cy = _label(draw, x, y, "PÄIVÄKOTI", stale=bool(data and data.get("_stale")))
 
     if not data:
-        _text(draw, (x + PAD, title_y + 30), "Ei saatavilla", FONT_SMALL, fill=GRAY)
+        _text(draw, (x + PAD, cy), "Ei saatavilla", FONT_SMALL, fill=GRAY)
         return
 
     events = data.get("events", [])
     if not events:
-        _text(draw, (x + PAD, title_y + 38), "Ei tulevia tapahtumia", FONT_SMALL, fill=GRAY)
+        _text(draw, (x + PAD, cy), "Ei tulevia tapahtumia", FONT_TINY, fill=GRAY)
         return
 
-    event_y = title_y + 38
-    row_h1  = 22   # title row height
-    row_h2  = 18   # description row height
-    row_gap = 8    # gap to next event
-    block_h = row_h1 + row_h2 + row_gap
-    # Collect visible events
-    visible = []
-    tmp_y = event_y
+    row_h1  = 15   # date row
+    row_h2  = 20   # title row (bold)
+    row_h3  = 15   # description row
+    row_gap = 8
+    block_h = row_h1 + row_h2 + row_h3 + row_gap
+
     for ev in events:
-        if tmp_y + block_h > y + h - 10:
+        if cy + block_h > y + h - PAD:
             break
-        visible.append(ev)
-        tmp_y += block_h
-    for i, ev in enumerate(visible):
-        ev_date = ev.get("date", "")
-        title   = ev.get("title", "")
-        desc    = ev.get("description", "")
+        dt    = _date_str(ev.get("date", ""), weekday=True)
+        title = ev.get("title", "")
+        desc  = ev.get("description", "")
 
-        try:
-            from datetime import date as _d
-            d = _d.fromisoformat(ev_date)
-            dt_str = f"{d.day}.{d.month}."
-        except ValueError:
-            dt_str = ev_date[5:]
-
-        # Top row: date in gray on the left, title in black
-        _text(draw, (x + PAD,      event_y), dt_str,     FONT_SMALL, fill=GRAY)
-        _text(draw, (x + PAD + 50, event_y), title[:30], FONT_SMALL)
-
-        # Bottom row: description in gray
+        _text(draw, (x + PAD, cy),                    dt,         FONT_TINY, fill=GRAY)
+        _text(draw, (x + PAD, cy + row_h1),           title[:28], FONT_MED)
         if desc:
-            _text(draw, (x + PAD, event_y + row_h1), desc[:42], FONT_TINY, fill=GRAY)
+            _text(draw, (x + PAD, cy + row_h1 + row_h2), desc[:36], FONT_TINY, fill=GRAY)
+        cy += block_h
 
-        event_y += block_h
 
-
-def _draw_waste(draw: ImageDraw.Draw, data: dict | None, x: int, y: int, w: int, h: int):
-    title_y = y + PAD
-    _text(draw, (x + PAD, title_y), "JÄTEHUOLTO", FONT_LARGE)
-    if data and data.get("_stale"):
-        _stale_mark(draw, x + PAD + 140, title_y)
+def _draw_waste(draw: ImageDraw.Draw, data: dict | None,
+                x: int, y: int, w: int, h: int):
+    cy = _label(draw, x, y, "JÄTEHUOLTO", stale=bool(data and data.get("_stale")))
 
     if not data:
-        _text(draw, (x + PAD, title_y + 38), "Ei saatavilla", FONT_MED, fill=GRAY)
+        _text(draw, (x + PAD, cy), "Ei saatavilla", FONT_SMALL, fill=GRAY)
         return
 
     collections = data.get("next_collections", [])
     if not collections:
-        _text(draw, (x + PAD, title_y + 38), "Ei tietoja", FONT_SMALL, fill=GRAY)
+        _text(draw, (x + PAD, cy), "Ei tietoja", FONT_TINY, fill=GRAY)
         return
 
-    item_y = title_y + 38
-    line_h = 38
+    line_h = 40
     for col in collections[:4]:
-        if item_y + line_h > y + h - PAD:
+        if cy + line_h > y + h - PAD:
             break
         ctype = col.get("type", "")
-        days = col.get("days_until")
-        date = col.get("date", "")
+        days  = col.get("days_until")
 
-        date_short = date[5:] if len(date) >= 7 else date  # YYYY-MM-DD → MM-DD
         if days == 0:
             days_str = "Tänään"
         elif days == 1:
@@ -443,61 +434,78 @@ def _draw_waste(draw: ImageDraw.Draw, data: dict | None, x: int, y: int, w: int,
         elif days is not None:
             days_str = f"{days} pv"
         else:
-            days_str = date_short
+            days_str = col.get("date", "")[5:]
 
-        _text(draw, (x + PAD, item_y), ctype, FONT_MED)
-        _text(draw, (x + w - PAD, item_y + 2), days_str, FONT_SMALL, fill=GRAY, anchor="ra")
-        item_y += line_h
+        _text(draw, (x + PAD,     cy), ctype,    FONT_MED)
+        _text(draw, (x + w - PAD, cy + 2), days_str, FONT_SMALL, fill=GRAY, anchor="ra")
+        cy += line_h
 
 
-# ── Main function ───────────────────────────────────────────────────────────
+# ── Header ───────────────────────────────────────────────────────────────────
+
+def _draw_header(draw: ImageDraw.Draw, width: int):
+    """Full-width black header bar with title and date/time."""
+    draw.rectangle([0, 0, width, HEADER_H - 1], fill=FG)
+
+    now      = datetime.now()
+    day_abbr = _DAYS_FI[now.weekday()]
+    date_str = f"{day_abbr} {now.day}.{now.month}.{now.year}"
+    time_str = now.strftime("%H:%M")
+
+    mid_y = HEADER_H // 2
+    _text(draw, (PAD,         mid_y), "KOTINÄKYMÄ", FONT_HEADER, fill=BG, anchor="lm")
+    _text(draw, (width - PAD, mid_y), date_str,     FONT_SMALL,  fill=BG, anchor="rm")
+    # Time slightly left of the date — measure date width first
+    date_bbox = draw.textbbox((0, 0), date_str, font=FONT_SMALL)
+    date_w    = date_bbox[2] - date_bbox[0]
+    _text(draw, (width - PAD - date_w - 14, mid_y), time_str, FONT_SMALL, fill=BG, anchor="rm")
+
+
+# ── Main render function ─────────────────────────────────────────────────────
 
 def render(
-    weather: dict | None = None,
+    weather:     dict | None = None,
     electricity: dict | None = None,
-    waste: dict | None = None,
-    calendar: dict | None = None,
-    daycare: dict | None = None,
-    hsl: dict | None = None,
-    width: int = WIDTH,
+    waste:       dict | None = None,
+    calendar:    dict | None = None,
+    daycare:     dict | None = None,
+    hsl:         dict | None = None,
+    width:  int = WIDTH,
     height: int = HEIGHT,
 ) -> Image.Image:
     """
-    Renders the dashboard and returns a PIL Image object.
-    Each data parameter can be None (section shows 'Ei saatavilla').
+    Renders the dashboard and returns a PIL Image (mode L, 800×480).
 
-    Layout (3 rows × 2 columns):
-      ┌─────────────────────┬───────────────────────┐
-      │  PÄIVÄKOTI          │  KALENTERI            │
-      ├─────────────────────┼───────────────────────┤
-      │  SÄHKÖ              │  HSL                  │
-      ├─────────────────────┼───────────────────────┤
-      │  SÄÄ + PVM/KELLO    │  JÄTTEET              │
-      └─────────────────────┴───────────────────────┘
+    Layout — dark header + 3-column × 2-row grid:
+
+      ┌──────────────────────────────────────────────────────────┐  HEADER (46px)
+      │  KOTINÄKYMÄ                              ke 19.3.2026   │
+      ├──────────────────┬──────────────────┬────────────────────┤
+      │  PÄIVÄKOTI       │  KALENTERI       │  SÄÄ              │  ROW 1 (217px)
+      ├──────────────────┼──────────────────┼────────────────────┤
+      │  SÄHKÖ           │  HSL             │  JÄTEHUOLTO       │  ROW 2 (217px)
+      └──────────────────┴──────────────────┴────────────────────┘
+       COL_W ≈ 266 px each
     """
     img  = Image.new("L", (width, height), BG)
     draw = ImageDraw.Draw(img)
 
-    ROW1_H = 162   # daycare / calendar
-    ROW2_H = 148   # electricity / HSL
-    ROW3_H = height - ROW1_H - ROW2_H  # weather+date / waste  (170)
-    RW     = width - RIGHT_X           # right column width
+    # Header
+    _draw_header(draw, width)
 
-    # Vertical divider
-    _vertical_divider(draw, LEFT_W, 0, height)
+    # Grid lines
+    _vertical_divider(draw, COL_W,       HEADER_H, height)
+    _vertical_divider(draw, COL_W * 2 + 1, HEADER_H, height)
+    _divider(draw, 0, ROW2_Y, width)
 
-    # Horizontal dividers (full width)
-    _divider(draw, 0, ROW1_H, width)
-    _divider(draw, 0, ROW1_H + ROW2_H, width)
+    # Row 1: daycare | calendar | weather
+    _draw_daycare (draw, daycare,  0,      HEADER_H, COL_W,          ROW_H)
+    _draw_calendar(draw, calendar, COL2_X, HEADER_H, COL_W,          ROW_H)
+    _draw_weather (draw, weather,  COL3_X, HEADER_H, width - COL3_X, ROW_H)
 
-    # Left column
-    _draw_daycare    (draw, daycare,     0,       0,              LEFT_W, ROW1_H)
-    _draw_electricity(draw, electricity, 0,       ROW1_H,         LEFT_W)
-    _draw_weather_datetime(draw, weather, 0, ROW1_H + ROW2_H, LEFT_W, ROW3_H)
-
-    # Right column
-    _draw_calendar(draw, calendar, RIGHT_X, 0,              RW, ROW1_H)
-    _draw_hsl     (draw, hsl,      RIGHT_X, ROW1_H,         RW, ROW2_H)
-    _draw_waste   (draw, waste,    RIGHT_X, ROW1_H + ROW2_H, RW, ROW3_H)
+    # Row 2: electricity | hsl | waste
+    _draw_electricity(draw, electricity, 0,      ROW2_Y, COL_W,          ROW_H)
+    _draw_hsl        (draw, hsl,         COL2_X, ROW2_Y, COL_W,          ROW_H)
+    _draw_waste      (draw, waste,       COL3_X, ROW2_Y, width - COL3_X, ROW_H)
 
     return img
