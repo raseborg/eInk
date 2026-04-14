@@ -317,8 +317,7 @@ def _draw_weather(draw: ImageDraw.Draw, data: dict | None,
 def _draw_news(draw: ImageDraw.Draw, data: dict | None,
                x: int, y: int, w: int, h: int):
     """Full-width news strip showing 2 items side by side."""
-    label = (data.get("label", "UUTISET") if data else "UUTISET")
-    _label(draw, x, y, label, stale=bool(data and data.get("_stale")))
+    _label(draw, x, y, "YLE UUTISET", stale=bool(data and data.get("_stale")))
     content_y = y + PAD + 16
 
     if not data:
@@ -425,7 +424,7 @@ def _draw_calendar(draw: ImageDraw.Draw, data: dict | None,
 
 def _draw_hsl(draw: ImageDraw.Draw, data: dict | None,
               x: int, y: int, w: int, h: int):
-    cy = _label(draw, x, y, "HSL", stale=bool(data and data.get("_stale")))
+    cy = _label(draw, x, y, "HSL lähdöt", stale=bool(data and data.get("_stale")))
 
     if not data:
         _text(draw, (x + PAD, cy), "Ei saatavilla", FONT_SMALL, fill=GRAY)
@@ -437,59 +436,24 @@ def _draw_hsl(draw: ImageDraw.Draw, data: dict | None,
         return
 
     # First connection — large display
-    first = connections[0]
-    dep   = first.get("departure", "")
-    arr   = first.get("arrival", "")
-    mins  = first.get("minutes_until", 0)
-    lines = first.get("lines", "")
-    walk  = first.get("walk_minutes", 0)
-    mode  = first.get("first_mode", "")
-    fdep  = first.get("first_depart", "")
+    # Fixed column width for "HH:MM" so line names align vertically
+    time_col = int(draw.textlength("00:00 ", font=FONT_SMALL)) + 4
+    line_h   = 22
 
-    time_str  = f"{dep}->{arr}" if arr else dep
-    mins_str  = f"Lähtöön {mins} min" if mins > 0 else "Lähdettävä nyt"
-    route_str = (f"{walk}min -> {lines}" if walk else lines).strip()
-
-    _text(draw, (x + PAD, cy), time_str, FONT_MED)
-    cy += 26
-
-    _text(draw, (x + PAD,     cy), route_str, FONT_TINY, fill=GRAY)
-    if fdep:
-        _text(draw, (x + w - PAD, cy), fdep, FONT_TINY, fill=GRAY, anchor="ra")
-    cy += 18
-
-    # Minutes-until badge
-    _badge(draw, x + PAD, cy, mins_str)
-    cy += 30
-
-    # Remaining connections — compact two-row style
-    row_h1  = 18
-    row_h2  = 15
-    row_gap = 8
-    block_h = row_h1 + row_h2 + row_gap
-
-    for conn in connections[1:]:
-        if cy + block_h > y + h - PAD:
+    for conn in connections:
+        if cy + line_h > y + h - PAD:
             break
-        dep2   = conn.get("departure", "")
         arr2   = conn.get("arrival", "")
-        mins2  = conn.get("minutes_until", 0)
         lines2 = conn.get("lines", "")
-        walk2  = conn.get("walk_minutes", 0)
-        mode2  = conn.get("first_mode", "")
         fdep2  = conn.get("first_depart", "")
 
-        t2 = f"{dep2}->{arr2}" if arr2 else dep2
-        m2 = f"{mins2} min" if mins2 > 0 else "Nyt"
-        r2 = (f"{walk2}min -> {lines2}" if walk2 else lines2).strip()
+        route = lines2
+        if arr2:
+            route += f" -> {arr2}"
 
-        _text(draw, (x + PAD,     cy), t2, FONT_SMALL)
-        _text(draw, (x + w - PAD, cy), m2, FONT_SMALL, anchor="ra")
-        cy += row_h1
-        _text(draw, (x + PAD,     cy), r2,   FONT_TINY, fill=GRAY)
-        if fdep2:
-            _text(draw, (x + w - PAD, cy), fdep2, FONT_TINY, fill=GRAY, anchor="ra")
-        cy += row_h2 + row_gap
+        _text(draw, (x + PAD,            cy), fdep2,  FONT_SMALL)
+        _text(draw, (x + PAD + time_col, cy), route,  FONT_SMALL, fill=GRAY)
+        cy += line_h
 
 
 def _draw_daycare(draw: ImageDraw.Draw, data: dict | None,
@@ -505,23 +469,26 @@ def _draw_daycare(draw: ImageDraw.Draw, data: dict | None,
         _text(draw, (x + PAD, cy), "Ei tulevia tapahtumia", FONT_TINY, fill=GRAY)
         return
 
-    row_h1  = 15   # date row
-    row_h2  = 20   # title row (bold)
-    row_h3  = 15   # description row
-    row_gap = 8
-    block_h = row_h1 + row_h2 + row_h3 + row_gap
+    row_h1   = 13   # date row
+    row_h2   = 19   # title row (bold)
+    desc_lh  = 12   # height per description line (FONT_LABEL size)
+    row_gap  = 5
 
     for ev in events:
-        if cy + block_h > y + h - PAD:
-            break
         dt    = _date_str(ev.get("date", ""), weekday=True)
         title = ev.get("title", "")
         desc  = ev.get("description", "")
 
-        _text(draw, (x + PAD, cy),                    dt,         FONT_TINY, fill=GRAY)
-        _text(draw, (x + PAD, cy + row_h1),           title[:28], FONT_MED)
-        if desc:
-            _text(draw, (x + PAD, cy + row_h1 + row_h2), desc[:36], FONT_TINY, fill=GRAY)
+        desc_lines = _wrap_text(draw, desc, FONT_LABEL, w - 2 * PAD)[:2] if desc else []
+        block_h = row_h1 + row_h2 + len(desc_lines) * desc_lh + row_gap
+
+        if cy + block_h > y + h - PAD:
+            break
+
+        _text(draw, (x + PAD, cy),           dt,    FONT_TINY, fill=GRAY)
+        _text(draw, (x + PAD, cy + row_h1),  title, FONT_MED)
+        for i, line in enumerate(desc_lines):
+            _text(draw, (x + PAD, cy + row_h1 + row_h2 + i * desc_lh), line, FONT_LABEL, fill=GRAY)
         cy += block_h
 
 

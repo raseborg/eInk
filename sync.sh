@@ -6,4 +6,4 @@ rsync -av \
   --exclude output \
   --exclude .git \
   --exclude __pycache__ \
-  "$(dirname "$0")/" pi@eink.local:~/eInk/
+  "$(dirname "$0")/" juhani@kitchen.local:~/eInk/

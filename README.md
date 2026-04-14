@@ -130,59 +130,73 @@ Attach the Waveshare HAT to the 40-pin GPIO header with the Pi powered off.
 ### 3. Enable SPI
 
 ```bash
-ssh pi@eink.local
-sudo raspi-config   # Interface Options → SPI → Enable
-sudo reboot
+ssh -t USER@HOSTNAME "sudo raspi-config nonint do_spi 0"
 ```
 
-### 4. Install dependencies
+### 4. Install system dependencies
 
 ```bash
-# Waveshare e-Paper library
-git clone https://github.com/waveshare/e-Paper.git
-
-# Project
-git clone <repo> eInk
-cd eInk
-python3 -m venv venv
-venv/bin/pip install ~/e-Paper/RaspberryPi_JetsonNano/python
-venv/bin/pip install -r requirements.txt
-
-# System libraries required by the GPIO stack
-sudo apt install -y swig liblgpio-dev
-venv/bin/pip install spidev gpiozero lgpio
+ssh -t USER@HOSTNAME "sudo apt install -y git python3-venv python3-pip swig liblgpio-dev"
 ```
 
-### 5. Copy config
+### 5. Sync project files from Mac
 
 ```bash
-# From Mac:
-scp config.yaml pi@eink.local:~/eInk/
+./sync.sh
 ```
 
-### 6. Test
+Or manually:
+```bash
+rsync -av --exclude venv --exclude cache --exclude output --exclude .git \
+  /path/to/eInk/ USER@HOSTNAME:~/eInk/
+```
+
+### 6. Set up virtualenv and install Python dependencies
 
 ```bash
-venv/bin/python main.py
+ssh USER@HOSTNAME "cd ~/eInk && python3 -m venv venv && venv/bin/pip install -r requirements.txt"
 ```
 
-### 7. Set up cron
+Then install the Waveshare e-Paper library (not on PyPI — must be cloned from GitHub):
 
 ```bash
-crontab -e
+ssh USER@HOSTNAME "cd ~/eInk && git clone https://github.com/waveshare/e-Paper waveshare-epaper && venv/bin/pip install ./waveshare-epaper/RaspberryPi_JetsonNano/python/"
 ```
 
-Add:
-```
-@reboot cd /home/pi/eInk && venv/bin/python main.py >> /tmp/eink.log 2>&1
-*/10 * * * * cd /home/pi/eInk && venv/bin/python main.py >> /tmp/eink.log 2>&1
-```
-
-### Sync changes from Mac to Pi
+### 7. Create required directories
 
 ```bash
-rsync -av --exclude venv --exclude cache --exclude output \
-  /path/to/eInk/ pi@eink.local:~/eInk/
+ssh USER@HOSTNAME "mkdir -p ~/eInk/cache ~/eInk/output"
+```
+
+### 8. Copy config
+
+```bash
+scp config.yaml USER@HOSTNAME:~/eInk/config.yaml
+```
+
+### 9. Test
+
+```bash
+ssh USER@HOSTNAME "cd ~/eInk && venv/bin/python main.py --no-cache"
+```
+
+### 10. Set up cron
+
+```bash
+ssh -t USER@HOSTNAME "crontab -e"
+```
+
+Add (replace `juhani` with your username):
+```
+@reboot sleep 30 && cd /home/juhani/eInk && venv/bin/python main.py >> /tmp/eink.log 2>&1
+*/10 * * * * cd /home/juhani/eInk && venv/bin/python main.py >> /tmp/eink.log 2>&1
+```
+
+### Sync changes from Mac
+
+```bash
+./sync.sh
 ```
 
 ## Project structure
