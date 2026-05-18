@@ -159,12 +159,24 @@ def fetch(config: dict, use_cache: bool = True) -> dict:
             return True
 
     all_events = [ev for ev in all_events if _not_ended(ev)]
+
+    # Keep the next 15 events per calendar so each cell has its share
+    # — single-calendar setups still see plenty; multi-calendar avoids
+    # one busy calendar drowning out the others.
+    per_cal_limit = 15
+    counts: dict[str, int] = {}
+    kept = []
     for ev in all_events:
+        cal = ev.get("calendar", "")
+        if counts.get(cal, 0) >= per_cal_limit:
+            continue
+        counts[cal] = counts.get(cal, 0) + 1
         ev.pop("_sort", None)
         ev.pop("end_time", None)
+        kept.append(ev)
 
     data = {
-        "events":     all_events[:8],
+        "events":     kept,
         "fetched_at": datetime.now().isoformat(timespec="seconds"),
     }
     _save_cache(data)

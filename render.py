@@ -391,14 +391,17 @@ def _draw_electricity(draw: ImageDraw.Draw, data: dict | None,
 
 
 def _draw_calendar(draw: ImageDraw.Draw, data: dict | None,
-                   x: int, y: int, w: int, h: int):
-    cy = _label(draw, x, y, "KALENTERI", stale=bool(data and data.get("_stale")))
+                   x: int, y: int, w: int, h: int,
+                   label: str = "KALENTERI", calendar_filter: str | None = None):
+    cy = _label(draw, x, y, label, stale=bool(data and data.get("_stale")))
 
     if not data:
         _text(draw, (x + PAD, cy), "Ei saatavilla", FONT_SMALL, fill=GRAY)
         return
 
     events = data.get("events", [])
+    if calendar_filter:
+        events = [ev for ev in events if ev.get("calendar") == calendar_filter]
     if not events:
         _text(draw, (x + PAD, cy), "Ei tulevia tapahtumia", FONT_TINY, fill=GRAY)
         return
@@ -583,15 +586,17 @@ def render(
     _divider(draw, 0, ROW2_Y, width)
     _divider(draw, 0, NEWS_Y,  width)
 
-    # Row 1: daycare | calendar | weather+datetime
+    # Row 1: daycare | työkalenteri | weather+datetime
     _draw_daycare (draw, daycare,     0,      0,      COL_W,          ROW_H)
-    _draw_calendar(draw, calendar,    COL2_X, 0,      COL_W,          ROW_H)
+    _draw_calendar(draw, calendar,    COL2_X, 0,      COL_W,          ROW_H,
+                   label="TYÖ", calendar_filter="Työ")
     _draw_weather (draw, weather,     COL3_X, 0,      width - COL3_X, ROW_H)
 
-    # Row 2: electricity | hsl | waste
+    # Row 2: electricity | perhekalenteri | hsl
     _draw_electricity(draw, electricity, 0,      ROW2_Y, COL_W,          ROW_H)
-    _draw_hsl        (draw, hsl,         COL2_X, ROW2_Y, COL_W,          ROW_H)
-    _draw_waste      (draw, waste,       COL3_X, ROW2_Y, width - COL3_X, ROW_H)
+    _draw_calendar   (draw, calendar,    COL2_X, ROW2_Y, COL_W,          ROW_H,
+                      label="PERHE", calendar_filter="Perhe")
+    _draw_hsl        (draw, hsl,         COL3_X, ROW2_Y, width - COL3_X, ROW_H)
 
     # Row 3: full-width news strip
     _draw_news(draw, news, 0, NEWS_Y, width, NEWS_H)

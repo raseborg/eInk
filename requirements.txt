@@ -4,4 +4,4 @@ requests
 icalendar
 recurring-ical-events
 pycaruna
-betterepd7in5==0.2.1
+betterepd7in5==0.2.1 ; platform_system == "Linux"
