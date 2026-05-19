@@ -408,7 +408,7 @@ def _draw_calendar(draw: ImageDraw.Draw, data: dict | None,
 
     row_h1  = 15   # date+time row
     row_h2  = 21   # title row
-    row_gap = 14   # gap between events
+    row_gap = 10   # gap between events
     block_h = row_h1 + row_h2 + row_gap
 
     for ev in events:
@@ -475,7 +475,7 @@ def _draw_daycare(draw: ImageDraw.Draw, data: dict | None,
     row_h1   = 13   # date row
     row_h2   = 19   # title row (bold)
     desc_lh  = 12   # height per description line (FONT_LABEL size)
-    row_gap  = 14
+    row_gap  = 10
 
     for ev in events:
         dt       = _date_str(ev.get("date", ""), weekday=True)
