@@ -194,9 +194,17 @@ def main():
     # Fetch all modules independently
     log.info("Fetching data...")
     weather     = fetch_module("weather",     config, use_cache)
-    electricity = fetch_module("electricity", config, use_cache)
-    waste       = fetch_module("waste",       config, use_cache)
     calendar    = fetch_module("calendar",    config, use_cache)
+
+    # Electricity (Caruna) — only fetch if configured
+    electricity = None
+    if config.get("caruna", {}).get("username"):
+        electricity = fetch_module("electricity", config, use_cache)
+
+    # Waste — only fetch if configured
+    waste = None
+    if config.get("waste", {}).get("collections"):
+        waste = fetch_module("waste", config, use_cache)
 
     # eVaka – only fetch if configured
     daycare = None

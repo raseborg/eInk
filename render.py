@@ -580,23 +580,26 @@ def render(
     img  = Image.new("L", (width, height), BG)
     draw = ImageDraw.Draw(img)
 
-    # Grid lines — 3 columns × 2 rows + full-width news strip
+    # Grid lines — 3 columns × 2 rows + full-width news strip.
+    # Left column is one tall cell (PÄIVÄKOTI), so the row divider
+    # skips the leftmost column to keep daycare visually as one block.
     _vertical_divider(draw, COL_W,       0, NEWS_Y)
     _vertical_divider(draw, COL_W * 2 + 1, 0, NEWS_Y)
-    _divider(draw, 0, ROW2_Y, width)
-    _divider(draw, 0, NEWS_Y,  width)
+    _divider(draw, COL_W, ROW2_Y, width)
+    _divider(draw, 0,     NEWS_Y, width)
 
-    # Row 1: daycare | työkalenteri | weather+datetime
-    _draw_daycare (draw, daycare,     0,      0,      COL_W,          ROW_H)
-    _draw_calendar(draw, calendar,    COL2_X, 0,      COL_W,          ROW_H,
-                   label="TYÖ", calendar_filter="Työ")
-    _draw_weather (draw, weather,     COL3_X, 0,      width - COL3_X, ROW_H)
+    # Left column (full height): PÄIVÄKOTI
+    _draw_daycare(draw, daycare, 0, 0, COL_W, NEWS_Y)
 
-    # Row 2: electricity | perhekalenteri | hsl
-    _draw_electricity(draw, electricity, 0,      ROW2_Y, COL_W,          ROW_H)
-    _draw_calendar   (draw, calendar,    COL2_X, ROW2_Y, COL_W,          ROW_H,
-                      label="PERHE", calendar_filter="Perhe")
-    _draw_hsl        (draw, hsl,         COL3_X, ROW2_Y, width - COL3_X, ROW_H)
+    # Middle column: työ (ylä) + perhe (ala)
+    _draw_calendar(draw, calendar, COL2_X, 0,      COL_W, ROW_H,
+                   label="TYÖ",   calendar_filter="Työ")
+    _draw_calendar(draw, calendar, COL2_X, ROW2_Y, COL_W, ROW_H,
+                   label="PERHE", calendar_filter="Perhe")
+
+    # Right column: sää (ylä) + HSL (ala)
+    _draw_weather(draw, weather, COL3_X, 0,      width - COL3_X, ROW_H)
+    _draw_hsl    (draw, hsl,     COL3_X, ROW2_Y, width - COL3_X, ROW_H)
 
     # Row 3: full-width news strip
     _draw_news(draw, news, 0, NEWS_Y, width, NEWS_H)
