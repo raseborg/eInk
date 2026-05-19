@@ -115,6 +115,36 @@ def _fetch_raw(s: requests.Session, base_url: str, start: date, end: date) -> li
         raise DataFetchError(f"eVaka event fetch failed: {e}") from e
 
 
+def _fetch_children(s: requests.Session, base_url: str) -> dict:
+    """Returns {child_uuid: short_name}. Short = preferredName or first token of firstName."""
+    try:
+        resp = s.get(
+            f"{base_url}/api/citizen/children",
+            headers={"referer": f"{base_url}/calendar"},
+            timeout=15,
+        )
+        if resp.status_code in (401, 403):
+            raise DataFetchError("_relogin")
+        resp.raise_for_status()
+        children = resp.json() or []
+    except DataFetchError:
+        raise
+    except requests.RequestException:
+        return {}
+
+    out = {}
+    for c in children:
+        uid = c.get("id")
+        if not uid:
+            continue
+        short = (c.get("preferredName") or "").strip()
+        if not short:
+            first = (c.get("firstName") or "").strip()
+            short = first.split()[0] if first else "?"
+        out[uid] = short
+    return out
+
+
 # ── Conversion to standard format ──────────────────────────────────────────
 
 _AFTERNOON_CUTOFF_HOUR = 18   # after this hour, skip today and show tomorrow onwards
@@ -128,8 +158,8 @@ def _apply_cutoff(events: list) -> list:
     return [e for e in events if e.get("date", "") >= min_date.isoformat()]
 
 
-def _parse_events(raw: list, today: date, end: date) -> list[dict]:
-
+def _parse_events(raw: list, today: date, end: date, child_names: dict | None = None) -> list[dict]:
+    child_names = child_names or {}
     events = []
     for ev in raw:
         period    = ev.get("period", {})
@@ -146,6 +176,11 @@ def _parse_events(raw: list, today: date, end: date) -> list[dict]:
         title = ev.get("title", "")
         desc  = ev.get("description", "")
 
+        attending = ev.get("attendingChildren") or {}
+        names = [child_names[uid] for uid in attending if uid in child_names]
+        # stable order: by name
+        names.sort()
+
         events.append({
             "title":       title,
             "description": desc,
@@ -153,6 +188,7 @@ def _parse_events(raw: list, today: date, end: date) -> list[dict]:
             "time":        None,
             "all_day":     True,
             "calendar":    "Päiväkoti",
+            "children":    names,
         })
 
     events.sort(key=lambda e: e["date"])
@@ -201,7 +237,13 @@ def fetch(config: dict, use_cache: bool = True) -> dict:
         s   = _login(base_url, username, password)
         raw = _fetch_raw(s, base_url, today, end)
 
-    events = _apply_cutoff(_parse_events(raw, today, end))
+    try:
+        children = _fetch_children(s, base_url)
+    except DataFetchError:
+        # Children list not critical — events still work without names
+        children = {}
+
+    events = _apply_cutoff(_parse_events(raw, today, end, children))
     data   = {
         "events":     events,
         "fetched_at": datetime.now().isoformat(timespec="seconds"),

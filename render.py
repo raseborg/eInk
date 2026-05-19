@@ -478,9 +478,12 @@ def _draw_daycare(draw: ImageDraw.Draw, data: dict | None,
     row_gap  = 5
 
     for ev in events:
-        dt    = _date_str(ev.get("date", ""), weekday=True)
-        title = ev.get("title", "")
-        desc  = ev.get("description", "")
+        dt       = _date_str(ev.get("date", ""), weekday=True)
+        title    = ev.get("title", "")
+        desc     = ev.get("description", "")
+        children = ev.get("children") or []
+        if children:
+            dt = f"{dt}  ·  {' & '.join(children)}"
 
         desc_lines = _wrap_text(draw, desc, FONT_LABEL, w - 2 * PAD)[:2] if desc else []
         block_h = row_h1 + row_h2 + len(desc_lines) * desc_lh + row_gap
