@@ -4,32 +4,21 @@
 - [x] Fork + kloonaus `~/Sources/eInk` (raseborg/eInk → JuhaniS/eInk upstream)
   - 2026-05-18: siirretty `~/Documents/eInk` → `~/Sources/eInk` (iCloud korruptoi venviä jatkuvasti)
 - [x] Dev-ympäristö: Python 3.14 venv + requirements.txt
-- [x] `config.yaml` täytetty: koti, työ- ja perhekalenteri, HSL-avain, lähtötaulut
-- [x] Ensimmäinen täysi preview-render: sää + kalenterit + HSL + uutiset toimii
+- [x] `config.yaml` täytetty: koti, työ- ja perhekalenteri, HSL-avain, lähtötaulut, **eVaka-tunnukset**
+- [x] Ensimmäinen täysi preview-render: kaikki kuusi solua tuottavat dataa (sää, työ, perhe, päiväkoti, HSL, uutiset)
 - [x] HSL refaktoroitu reittisuunnittelusta lähtötaulu-malliin (config.hsl.boards)
-- [x] Render-layout: TYÖ + PERHE-kalenterit erillisissä soluissa, HSL siirretty SÄÄ-sarakkeen alle
+- [x] Render-layout: PÄIVÄKOTI vasen sarake täysikorkeana (Alice/Mikael näkyy), TYÖ/PERHE keskellä, SÄÄ/HSL oikealla
+- [x] eVaka-integraatio toimii: `/api/citizen/children` UUID → etunimi -mappaus
 - [x] Upstream merge Juhanin uusimpiin committeihin (RRULE-tuki, partial refreshit)
 - [x] Commit + push origin/main (raseborg/eInk)
+- [x] 2026-05-19: ostettu väärä rauta AliExpressistä — 7.5" (B) 3-värinen + HAT puuttui pakkauksesta
+- [x] 2026-06-04: tilattu korvaava rauta Welectronista (Saksa) — Waveshare 13504 7.5" e-Paper HAT V2 (B/W, 800×480), 64,90 € + posti. ETA n. 9.–11.6.
 
 ## Seuraavaksi (Mac-dev)
 
-### 1. eVaka-integraatio (BACKLOG)
-Päiväkotisolu on configissa kommentoitu valmiiksi mutta tunnukset puuttuvat.
-Vaiheessa 2026-05-18 testissä Espoon eVaka palautti `403 Forbidden` weak-login
--endpointista — joko tunnukset puuttuu tai endpoint on muuttunut.
-
-- [ ] Lisää tunnukset `evaka.username` / `evaka.password` configiin
-- [ ] Aja `python main.py --only evaka --no-cache` ja katso virhelogi
-- [ ] Jos 403 jatkuu, tarkista että `evaka.base_url` on oikea
-  (Espoo voi olla `https://espoonvarhaiskasvatus.fi` tai päivittynyt domain)
-- [ ] Vertaa `data/evaka.py`:n login-URL nykyiseen eVaka-citizen-rajapintaan
-  selaimen Network-tabista (kirjautumiskutsu)
-- [ ] Kun toimii: PÄIVÄKOTI-solu (vasen ylä) korvautuu päivän tapahtumilla
-- [ ] Myöhemmin kun lapsi siirtyy kouluun: korvaa Wilmalla (alempana)
-
-### 2. Pi-asennus
-Rauta käytössä (Pi Zero 2 WH + Waveshare 7.5" V2). Juhanin valmis ohje
-[README.md](README.md):ssä "Deployment to Raspberry Pi" -osiossa.
+### 1. Pi-asennus (paketin saapumista odottaen)
+Rauta tilattu Welectronista 2026-06-04. ETA Suomeen n. 9.–11.6.
+Kun paketti saapuu, aja allaoleva sekvenssi (~30–45 min):
 
 - [ ] Flashaa SD-kortti Raspberry Pi Imagerilla (OS Lite 64-bit, SSH, WiFi FI, hostname `eink`)
 - [ ] Kytke HAT virrat-pois Pi:hin, boot, `ping eink.local`
